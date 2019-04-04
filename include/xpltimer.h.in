@@ -1,0 +1,273 @@
+#ifndef XPLTIMER_H
+#define XPLTIMER_H
+
+#cmakedefine HAVE_VALGRIND_H	1
+#cmakedefine HAVE_MMAN_H		1
+
+/*
+	Platform defines
+
+	The use of these should be limited as much as possible.  Specific tests for
+	features of the platform are prefered.
+*/
+#ifndef LINUX
+#cmakedefine LINUX					1
+#endif
+
+#ifndef WIN32
+#cmakedefine WIN32					1
+#endif
+#ifndef WINDOWS
+#cmakedefine WINDOWS				1
+
+#endif
+
+
+#ifndef MACOSX
+#cmakedefine MACOSX					1
+#endif
+#ifndef DARWIN
+#cmakedefine DARWIN					1
+#endif
+#ifndef APPLE
+#cmakedefine APPLE					1
+#endif
+
+#cmakedefine DEBUG					1
+
+
+#ifdef WINDOWS
+# define		WIN_CDECL		__cdecl
+# define		WIN_STDCALL		__stdcall
+# define		EXPORT			__declspec(dllexport)
+# define		IMPORT			__declspec(dllimport)
+# define		INLINE			__inline
+#else
+# define		WIN_CDECL
+# define		WIN_STDCALL
+# define		EXPORT
+# define		IMPORT
+# define		INLINE			__inline
+#endif
+
+
+#define HAVE_GETTIMEOFDAY			1  // FIXME - detect this
+
+#ifdef HAVE_GETTIMEOFDAY
+# define XplGetHighResolutionTimer() 0
+# define XplGetHighResolutionTime(counter)	 {	struct timeval tOfDaYs;												 \
+												gettimeofday(&tOfDaYs,NULL);										 \
+												(counter) = (time_t)((tOfDaYs.tv_sec * 1000000) + tOfDaYs.tv_usec);  \
+											 }
+#elif defined (WIN32)
+
+
+# define XplGetHighResolutionTimer() 0
+# define XplGetHighResolutionTime(counter) {   LARGE_INTEGER   c;							\
+													  if (QueryPerformanceCounter(&c) != 0) {	\
+														 (counter) = c.LowPart;					 \
+													  }											 \
+											 }
+#else
+# error "XplGetHighResolutionTime is not implemented on this platform"
+#endif
+
+
+#ifndef XPL_TIMEOUT
+#define XPL_TIMEOUT
+#if defined(LINUX) || defined(S390RH) || defined(SOLARIS) || defined(MACOSX)
+typedef int XplTimeout;
+#elif defined(WIN32)
+typedef struct timeval XplTimeout;
+#endif
+EXPORT int XplTimeoutSet( XplTimeout *timeout, int milliseconds );
+EXPORT int XplTimeoutGet( XplTimeout *timeout );
+#endif
+
+
+#include <stdio.h>
+#include <xpllock.h>
+
+#if defined(LINUX) || defined(MACOSX)
+#include <time.h>
+#include <sys/time.h>
+#include <stdlib.h>
+
+typedef struct _CrossPlatformTimer {
+	unsigned long usec;
+	unsigned long sec;
+} XplTimer;
+
+typedef enum {
+	XPL_TIME_SEC,
+	XPL_TIME_MSEC,
+	XPL_TIME_USEC,
+	XPL_TIME_NSEC,
+} XplTimeUnit;
+
+#define XplCPUTimer		struct timespec
+
+#define XplConsolePrintf printf
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+__inline static void
+XplCPUTimerSubtract( XplCPUTimer *end, XplCPUTimer *begin, XplCPUTimer *result )
+{
+	if( end->tv_sec >= begin->tv_sec ) {
+		if( end->tv_nsec >= begin->tv_nsec ) {
+			result->tv_nsec = end->tv_nsec - begin->tv_nsec;
+			result->tv_sec = end->tv_sec - begin->tv_sec;
+			return;
+		}
+
+		if( end->tv_sec > begin->tv_sec ) {
+			result->tv_nsec = 1000000000 + end->tv_nsec - begin->tv_nsec;
+			result->tv_sec = end->tv_sec - begin->tv_sec - 1;
+			return;
+		}
+	}
+	fprintf(stderr, "XplCPUTimerSubtruct: End Time is less then Begin time\n" );
+
+	result->tv_sec = 0;
+	result->tv_nsec = 0;
+	return;
+}
+
+__inline static void
+XplCPUTimerAdd( XplCPUTimer *time1, XplCPUTimer *time2, XplCPUTimer *result )
+{
+	result->tv_sec = time1->tv_sec + time2->tv_sec;
+	result->tv_nsec = time1->tv_nsec + time2->tv_nsec;
+
+	if( result->tv_nsec > 1000000000 ) {
+		result->tv_nsec -= 1000000000;
+		result->tv_sec++;
+	}
+}
+
+
+#elif defined(WIN32) || defined(WINDOWS)
+typedef struct _CrossPlatformTimer {
+	unsigned long usec;
+	unsigned long sec;
+
+	LARGE_INTEGER stop;
+	LARGE_INTEGER start;
+
+	XplBool usable;
+} XplTimer;
+
+typedef enum {
+	XPL_TIME_SEC,
+	XPL_TIME_MSEC,
+	XPL_TIME_USEC,
+	XPL_TIME_NSEC,
+} XplTimeUnit;
+
+#define XplCPUTimer		int
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+__inline static void
+XplCPUTimerSubtract( XplCPUTimer *end, XplCPUTimer *begin, XplCPUTimer *result )
+{
+	if( end >= begin ) {
+		*result = *end - *begin;
+		return;
+	}
+	*result = 0;
+	return;
+}
+
+__inline static void
+XplCPUTimerAdd( XplCPUTimer *time1, XplCPUTimer *time2, XplCPUTimer *result )
+{
+	*result = *time1 + *time2;
+}
+
+
+#elif defined(NETWARE) || defined(LIBC)
+typedef struct _CrossPlatformTimer {
+	unsigned long usec;
+	unsigned long sec;
+} XplTimer;
+
+#define XplCPUTimer		int
+#else
+#error No cross platform timer implemented on this platform.
+#endif
+
+__inline static void
+XplTimerSubtract( XplTimer *end, XplTimer *begin, XplTimer *result )
+{
+	if( end->sec >= begin->sec ) {
+		if( end->usec >= begin->usec ) {
+			result->usec = end->usec - begin->usec;
+			result->sec = end->sec - begin->sec;
+			return;
+		}
+
+		if( end->sec > begin->sec ) {
+			result->usec = 1000000 + end->usec - begin->usec;
+			result->sec = end->sec - begin->sec - 1;
+			return;
+		}
+	}
+	fprintf(stderr, "XplTimerSubtract: End Time is less then Begin time\n" );
+
+	result->sec = 0;
+	result->usec = 0;
+	return;
+}
+
+__inline static void
+XplTimerAdd( XplTimer *time1, XplTimer *time2, XplTimer *result )
+{
+	result->sec = time1->sec + time2->sec;
+	result->usec = time1->usec + time2->usec;
+
+	if( result->usec > 1000000 ) {
+		result->usec -= 1000000;
+		result->sec++;
+	}
+}
+
+typedef struct {
+	XplTimer total;
+	XplTimer max;
+	XplTimer min;
+	unsigned long count;
+} XplTimerAccumulator;
+
+EXPORT int XplCPUTimerCmp( XplCPUTimer *left, XplCPUTimer *right );
+EXPORT void XplCPUTimerDivide( XplCPUTimer *dividend, unsigned int divisor, XplCPUTimer *quotient );
+EXPORT unsigned long XplCPUTimerInt( XplCPUTimer *timer, XplTimeUnit units );
+EXPORT void XplCPUThreadTimerStart(XplCPUTimer *timer);
+EXPORT void XplCPUThreadTimerStop(XplCPUTimer *timer);
+EXPORT unsigned long XplTimerInt( XplTimer *timer, XplTimeUnit units );
+EXPORT int XplTimerCmp( XplTimer *left, XplTimer *right );
+EXPORT void XplTimerDivide( XplTimer *dividend, unsigned int divisor, XplTimer *quotient );
+EXPORT void XplTimerStart(XplTimer *timer);
+EXPORT void XplTimerStop(XplTimer *timer);
+EXPORT XplTimer *XplTimerSplit(XplTimer *startTime, XplTimer *splitTime );
+EXPORT XplTimer *XplTimerLap(XplTimer *lastTime, XplTimer *lapTime );
+EXPORT XplTimer *XplTimerSplitAndLap( XplTimer *startTime, XplTimer *splitTime, XplTimer *lastTime, XplTimer *lapTime );
+EXPORT void XplTimerAccumulate( XplTimerAccumulator *accum, XplTimer *timer );
+EXPORT void XplTimerAverage( XplTimerAccumulator *accum, XplTimer *out );
+EXPORT void XplTimerAccumulatorPrint( XplTimerAccumulator *accum, char *label );
+EXPORT void XplTimedCheckStart(XplTimer *timer);
+EXPORT void XplTimedCheckStop(XplTimer *timer, const char* checkName, long checkRate, XplAtomic *abortTrigger);
+
+#ifdef __cplusplus
+}
+#endif
+
+
+
+#endif // XPLTIMER_H
